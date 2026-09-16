@@ -172,8 +172,3 @@ jupyter notebook notebooks/macro_banking_equity_analysis.ipynb
 | **Maximum Drawdown (%)** | $\min\left(\frac{P_t - \max_{0 \le s \le t} P_s}{\max_{0 \le s \le t} P_s}\right) \times 100\%$ |
 | **Beta Saham terhadap IHSG** | $\beta = \frac{\text{Cov}(R_{\text{stock}}, R_{\text{IHSG}})}{\text{Var}(R_{\text{IHSG}})}$ |
 | **Korelasi Kurs (FX Correlation)** | $\rho(R_{\text{stock}}, R_{\text{USDIDR}})$ |
-
----
-
-## 👤 Profil & Portofolio
-Proyek ini didesain sebagai studi kasus nyata dalam melamar posisi **Data Analyst**, **Business Intelligence Analyst**, atau **Financial/Risk Analyst** di sektor perbankan dan jasa keuangan.

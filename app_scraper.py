@@ -11,7 +11,7 @@ Sumber Data:
 3. Yahoo Finance (Saham, Indeks, Valas, Komoditas)
 
 Cara Menjalankan:
-    streamlit run app_scraper.py
+    streamlit run app_scraper.py \\ ini jangan lupa
 """
 
 import logging

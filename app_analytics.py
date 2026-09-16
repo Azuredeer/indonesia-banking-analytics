@@ -11,7 +11,7 @@ Menganalisis:
 3. Kinerja Saham & Valuasi Portofolio (Bebas / Tanpa Batasan Ticker)
 
 Cara Menjalankan:
-    streamlit run app_analytics.py
+    streamlit run app_analytics.py \\ ini jangan lupa
 """
 
 import logging

@@ -1,0 +1,228 @@
+"""
+scrapers/bi_kurs.py
+====================
+Mengambil data KURS dari Bank Indonesia menggunakan web service resmi
+(bukan HTML scraping) sehingga jauh lebih stabil.
+
+Referensi web service:
+    https://www.bi.go.id/biwebservice/wskursbi.asmx
+
+Endpoint yang dipakai di sini: getSubKursLokal3
+    -> Data Kurs Transaksi BI berdasarkan kode mata uang & rentang tanggal.
+    Format response: XML hasil serialisasi System.Data.DataSet (.NET),
+    dengan struktur ASLI (sudah diverifikasi langsung ke server BI) seperti
+    berikut - dibungkus di dalam <diffgr:diffgram><NewDataSet>...:
+
+        <Table diffgr:id="Table1" msdata:rowOrder="0">
+          <id_subkurslokal>674095</id_subkurslokal>
+          <lnk_subkurslokal>39</lnk_subkurslokal>
+          <nil_subkurslokal>1.00</nil_subkurslokal>
+          <beli_subkurslokal>14084.23</beli_subkurslokal>
+          <jual_subkurslokal>14225.78</jual_subkurslokal>
+          <tgl_subkurslokal>2021-01-11T00:00:00+07:00</tgl_subkurslokal>
+          <mts_subkurslokal>USD  </mts_subkurslokal>
+        </Table>
+
+    PENTING: setiap baris data ada di elemen <Table>, dan field tanggal
+    bernama "tgl_subkurslokal" (BUKAN "tanggal" polos), field kurs jual/beli
+    bernama "jual_subkurslokal"/"beli_subkurslokal", dan field kode mata uang
+    "mts_subkurslokal". Dua versi kode sebelumnya salah menebak nama-nama
+    field ini (masing-masing mencari tag <Tkurs> lalu kolom "tanggal" polos)
+    sehingga hasilnya selalu kosong walau request-nya sukses.
+
+Catatan penting:
+- Web service ini kadang lambat / tidak selalu online 24 jam. Kode di
+  bawah sudah menangani error/timeouts dengan baik.
+- Kode mata uang mengikuti format 3 huruf standar (USD, EUR, JPY, dst).
+- Data BI hanya tersedia untuk hari kerja (tidak ada data di akhir pekan
+  / hari libur nasional) - itu normal, bukan berarti scraper gagal.
+- Tanggal dari BI datang dengan offset zona waktu (+07:00 / WIB). Kode ini
+  mengonversinya ke datetime naive (tanpa timezone) supaya aman dipakai
+  di analisis pandas maupun disimpan ke Excel.
+"""
+
+import re
+import logging
+from datetime import date, timedelta
+
+import requests
+import pandas as pd
+from xml.etree import ElementTree as ET
+
+from config import BI_KURS_WS_BASE, DEFAULT_HEADERS, REQUEST_TIMEOUT
+
+logger = logging.getLogger(__name__)
+
+OUTPUT_COLUMNS = ["tanggal", "mata_uang", "kurs_jual", "kurs_beli", "nilai"]
+
+
+def _parse_id_number(value) -> float | None:
+    """
+    Parse angka yang bisa datang dalam beberapa format berbeda:
+    - "15834"           -> 15834.0
+    - "15834.5"         -> 15834.5   (titik sebagai desimal, gaya umum API)
+    - "15.834,50"        -> 15834.5   (titik ribuan + koma desimal, gaya ID)
+    - "15834,50"        -> 15834.5   (koma sebagai desimal)
+    """
+    if value is None:
+        return None
+    s = str(value).strip().replace("%", "")
+    if not s:
+        return None
+
+    if "," in s and "." in s:
+        # Asumsikan format Indonesia: '.' ribuan, ',' desimal
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    # kalau cuma ada '.', biarkan apa adanya (sudah format desimal standar)
+
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _extract_rows_from_dataset_xml(xml_bytes: bytes) -> list[dict]:
+    """
+    Ambil semua baris data dari XML hasil serialisasi DataSet .NET.
+
+    DataSet .NET biasanya membungkus setiap baris dalam elemen bernama
+    "Table" (kadang "Table1", dst kalau ada multiple result set). Fungsi
+    ini defensif: elemen apapun yang namanya diawali "table" (setelah
+    namespace dibuang) dianggap satu baris data, KECUALI elemen skema XSD.
+    """
+    root = ET.fromstring(xml_bytes)
+    rows = []
+    for el in root.iter():
+        tag = el.tag.split("}")[-1]  # buang namespace
+        if tag.lower().startswith("table") and list(el):
+            row = {child.tag.split("}")[-1]: (child.text or "").strip() for child in el}
+            rows.append(row)
+    return rows
+
+
+def get_kurs_transaksi_bi(currency_code: str = "USD",
+                           start_date: str | None = None,
+                           end_date: str | None = None) -> pd.DataFrame:
+    """
+    Ambil data Kurs Transaksi BI untuk satu mata uang dalam rentang tanggal.
+
+    Parameters
+    ----------
+    currency_code : kode mata uang 3 huruf, misal "USD", "EUR", "JPY"
+    start_date    : format 'YYYY-MM-DD'. Default: 30 hari yang lalu.
+    end_date      : format 'YYYY-MM-DD'. Default: hari ini.
+
+    Returns
+    -------
+    pd.DataFrame dengan kolom: tanggal, mata_uang, kurs_jual, kurs_beli, nilai
+    ('nilai' = satuan kelipatan kurs, mis. 100 untuk JPY - kadang dipakai
+    BI untuk mata uang bernilai kecil per unit)
+    """
+    if end_date is None:
+        end_date = date.today().isoformat()
+    if start_date is None:
+        start_date = (date.today() - timedelta(days=30)).isoformat()
+
+    url = f"{BI_KURS_WS_BASE}/getSubKursLokal3"
+    params = {
+        "mts": currency_code.upper(),
+        "startdate": start_date,
+        "enddate": end_date,
+    }
+
+    logger.info("Mengambil kurs %s dari BI (%s s/d %s)", currency_code, start_date, end_date)
+
+    try:
+        resp = requests.get(url, params=params, headers=DEFAULT_HEADERS, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Gagal mengambil data kurs BI: %s", e)
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    try:
+        rows = _extract_rows_from_dataset_xml(resp.content)
+    except ET.ParseError as e:
+        logger.error("Gagal parsing XML response BI: %s", e)
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    if not rows:
+        logger.warning(
+            "Tidak ada data ditemukan untuk %s pada rentang %s s/d %s "
+            "(kemungkinan hari libur/akhir pekan, atau kode mata uang salah).",
+            currency_code, start_date, end_date,
+        )
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    raw_df = pd.DataFrame(rows)
+
+    # Cari nama kolom secara case-insensitive & fleksibel, karena field
+    # XML dari BI kadang berbeda kapitalisasi/penamaan kecil antar endpoint.
+    def find_col(*keywords):
+        for col in raw_df.columns:
+            col_lower = col.lower()
+            if all(kw in col_lower for kw in keywords):
+                return col
+        return None
+
+    # Field asli dari web service BI berformat "<jenis>_subkurslokal", mis.
+    # tgl_subkurslokal, jual_subkurslokal, beli_subkurslokal, nil_subkurslokal,
+    # mts_subkurslokal (kode mata uang). Deteksi pakai beberapa alias sekaligus
+    # supaya tetap jalan walau BI ganti sedikit penamaan field di masa depan.
+    col_tanggal = find_col("tgl") or find_col("tanggal") or find_col("date")
+    col_jual = find_col("jual")
+    col_beli = find_col("beli")
+    col_nilai = find_col("nil")
+    col_mts = find_col("mts") or find_col("valuta") or find_col("currency")
+
+    if col_tanggal is None or col_jual is None or col_beli is None:
+        logger.error(
+            "Tidak bisa mengenali kolom tanggal/jual/beli dari response BI untuk %s. "
+            "Kolom mentah yang ditemukan: %s. Mungkin BI mengubah nama field - "
+            "sesuaikan pencarian kolom di scrapers/bi_kurs.py.",
+            currency_code, list(raw_df.columns),
+        )
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    out = pd.DataFrame()
+    parsed_dates = pd.to_datetime(raw_df[col_tanggal], errors="coerce")
+    # Tanggal dari BI datang dengan offset zona waktu eksplisit (mis. +07:00).
+    # Buang info timezone TANPA menggeser waktunya ke UTC, supaya tanggal
+    # kalender tetap sesuai yang tertulis di response BI (mis. jangan sampai
+    # "11 Jan 00:00 WIB" berubah jadi "10 Jan 17:00" gara-gara dikonversi UTC).
+    if hasattr(parsed_dates.dt, "tz") and parsed_dates.dt.tz is not None:
+        parsed_dates = parsed_dates.dt.tz_localize(None)
+    out["tanggal"] = parsed_dates
+    # Utamakan kode mata uang dari response asli (field mts_*) kalau ada -
+    # lebih akurat daripada asumsi dari parameter yang diminta.
+    if col_mts:
+        out["mata_uang"] = raw_df[col_mts].str.strip().str.upper()
+    else:
+        out["mata_uang"] = currency_code.upper()
+    out["kurs_jual"] = raw_df[col_jual].map(_parse_id_number)
+    out["kurs_beli"] = raw_df[col_beli].map(_parse_id_number)
+    out["nilai"] = raw_df[col_nilai].map(_parse_id_number) if col_nilai else 1
+
+    out = out.dropna(subset=["tanggal"]).sort_values("tanggal").reset_index(drop=True)
+    return out
+
+
+def get_kurs_multi_currency(currency_codes: list[str],
+                             start_date: str | None = None,
+                             end_date: str | None = None) -> pd.DataFrame:
+    """Ambil kurs untuk beberapa mata uang sekaligus, digabung jadi satu DataFrame."""
+    all_dfs = []
+    for code in currency_codes:
+        df = get_kurs_transaksi_bi(code, start_date, end_date)
+        if not df.empty:
+            all_dfs.append(df)
+    if not all_dfs:
+        return pd.DataFrame(columns=OUTPUT_COLUMNS)
+    return pd.concat(all_dfs, ignore_index=True)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    df = get_kurs_transaksi_bi("USD")
+    print(df.tail(10))

@@ -159,14 +159,14 @@ def get_kurs_transaksi_bi(currency_code: str = "USD",
     def find_col(*keywords):
         for col in raw_df.columns:
             col_lower = col.lower()
-            if all(kw in col_lower for kw in keywords):
+            if any(kw in col_lower for kw in keywords):
                 return col
         return None
 
-    col_tanggal = find_col("tanggal") or find_col("date")
+    col_tanggal = find_col("tgl", "tanggal", "date")
     col_jual = find_col("jual")
     col_beli = find_col("beli")
-    col_nilai = find_col("nilai")
+    col_nilai = find_col("nil", "nilai")
 
     out = pd.DataFrame()
     out["tanggal"] = pd.to_datetime(raw_df[col_tanggal], errors="coerce") if col_tanggal else pd.NaT
@@ -177,6 +177,16 @@ def get_kurs_transaksi_bi(currency_code: str = "USD",
 
     out = out.dropna(subset=["tanggal"]).sort_values("tanggal").reset_index(drop=True)
     return out
+
+
+def get_kurs_range(currency_code: str = "USD",
+                   start_date: str | date | None = None,
+                   end_date: str | date | None = None) -> pd.DataFrame:
+    """Alias kompatibilitas UI untuk get_kurs_transaksi_bi (menerima str maupun datetime.date)."""
+    start_str = start_date.isoformat() if hasattr(start_date, "isoformat") else (str(start_date) if start_date else None)
+    end_str = end_date.isoformat() if hasattr(end_date, "isoformat") else (str(end_date) if end_date else None)
+    return get_kurs_transaksi_bi(currency_code, start_str, end_str)
+
 
 
 def get_kurs_multi_currency(currency_codes: list[str],

@@ -247,6 +247,18 @@ def get_bi_rate_terkini() -> dict:
     }
 
 
+def get_current_bi_rate() -> float | None:
+    """Mengembalikan nilai suku bunga acuan terkini (float) atau None jika gagal."""
+    res = get_bi_rate_terkini()
+    if res and res.get("nilai_persen") is not None:
+        try:
+            return float(res["nilai_persen"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     print(get_bi_rate_terkini())

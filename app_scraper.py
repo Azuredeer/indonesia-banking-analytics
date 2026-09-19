@@ -80,7 +80,6 @@ page = st.sidebar.radio(
         "💹 Yahoo Finance",
         "💱 Kurs Bank Indonesia",
         "🏦 BI-Rate",
-        "📑 Statistik OJK",
     ],
 )
 
@@ -104,22 +103,30 @@ if page == "🏠 Beranda Scraper":
     st.markdown(
         """
         Selamat datang di **Data Scraping & Ingestion Hub**. Aplikasi ini dirancang khusus
-        untuk mengotomatisasi pengambilan data publik dari tiga institusi finansial utama:
+        untuk mengotomatisasi pengambilan data publik terverifikasi secara *live* dan stabil:
 
-        | Sumber | Jenis Data | Metode Ekstraksi | Output |
+        | Sumber | Jenis Data | Metode Ekstraksi | Status Akses |
         |---|---|---|---|
-        | **Bank Indonesia** | Kurs Transaksi BI (Mata Uang Asing) | Web Service Resmi (`wskursbi.asmx` XML) | CSV / Excel / DataFrame |
-        | **Bank Indonesia** | Suku Bunga Acuan (BI-Rate / BI7DRR) | HTML Scraping (`BeautifulSoup` + Regex) | CSV / Excel / DataFrame |
-        | **OJK** | Statistik Sektor Keuangan (SPI/SPS/IKNB) | HTML Link Extractor & File Downloader | PDF / XLSX / Arsip |
-        | **Yahoo Finance** | Saham IHSG, Global, Valas, Komoditas | API Wrapper (`yfinance`) | CSV / Excel / DataFrame |
+        | **Yahoo Finance** | Saham IHSG, Global, Valas, Komoditas | API Wrapper (`yfinance`) | ✅ Aktif (Real-Time) |
+        | **Bank Indonesia** | Kurs Transaksi BI (Mata Uang Asing) | Web Service Resmi (`wskursbi.asmx` XML) | ✅ Aktif (Harian Bursa) |
+        | **Bank Indonesia** | Suku Bunga Acuan (BI-Rate / BI7DRR) | HTML Scraping (`BeautifulSoup` + Regex) | ✅ Aktif (Rapat Dewan Gubernur) |
 
         ---
-        ### 🎯 Tujuan Aplikasi Ini:
-        1. Menyediakan data mentah yang bersih, terstandardisasi, dan *timezone-safe*.
-        2. Menjadi fondasi data pipeline untuk artikel riset dan analisis pasar modal.
-        3. Memungkinkan ekspor instan ke format CSV & Excel untuk kebutuhan pelaporan.
+        ### ℹ️ Catatan Regulasi & Migrasi Portal OJK:
+        Sejak pertengahan 2025, **Otoritas Jasa Keuangan (OJK)** telah resmi memindahkan seluruh publikasi berkas
+        statistik perbankan (SPI & SPS) dari kanal web lama ke portal interaktif tertutup berbasis Microsoft PowerBI 
+        (`data.ojk.go.id/SJKPublic`) yang memerlukan otentikasi sesi browser. Demi mencegah *connection timeout* 
+        dan *access restriction*, data historis fundamental OJK disajikan secara terkurasi (*curated dataset*) 
+        langsung pada dashboard analitik [`app_analytics.py`](file:///d:/Project%20Analysis%20Personal/Data%20Banking%20Portofolio/app_analytics.py).
+
+        ---
+        ### 🎯 Fitur Pipeline:
+        1. **Pembersihan Otomatis**: Normalisasi *timezone-naive* dan penanganan format desimal regional.
+        2. **Multi-Asset & Multi-Currency**: Mendukung pencarian instrumen saham global, komoditas, dan valas.
+        3. **Dual Export**: Ekspor instan dalam satu klik ke format CSV (`utf-8-sig`) dan Excel (.xlsx).
         """
     )
+
 
 
 # ---------------------------------------------------------------------------
@@ -276,53 +283,4 @@ elif page == "🏦 BI-Rate":
             else:
                 st.warning("Gagal mengambil tabel histori atau halaman BI sedang tidak merespons.")
 
-
-# ---------------------------------------------------------------------------
-# 5. Halaman: Statistik OJK
-# ---------------------------------------------------------------------------
-elif page == "📑 Statistik OJK":
-    st.title("📑 Statistik Sektor Keuangan (OJK)")
-    st.write("Pindai dan unduh laporan resmi Statistik Perbankan, Syariah, IKNB, dan Pasar Modal.")
-
-    available_sources = ojk_stats.list_categories()
-    category_options = {src["label"]: key for key, src in available_sources.items()}
-
-    selected_labels = st.multiselect(
-        "Pilih Kategori Laporan OJK:",
-        list(category_options.keys()),
-        default=list(category_options.keys()),
-    )
-    selected_keys = [category_options[label] for label in selected_labels]
-
-    keyword = st.text_input(
-        "Filter kata kunci judul laporan (opsional)",
-        placeholder="mis. Statistik Perbankan, Januari 2025, Triwulan, Syariah, dst",
-    )
-
-    if st.button("🔍 Cari Laporan OJK", type="primary", disabled=not selected_keys):
-        with st.spinner(f"Memindai {len(selected_keys)} kanal OJK..."):
-            reports = ojk_stats.search_reports_multi(keyword.strip() or None, selected_keys)
-        st.session_state["ojk_reports"] = reports
-
-    reports = st.session_state.get("ojk_reports", [])
-    if reports:
-        st.success(f"Ditemukan {len(reports)} laporan OJK.")
-        df_reports = pd.DataFrame(reports)
-        st.dataframe(df_reports, use_container_width=True)
-
-        st.subheader("Unduh File Laporan")
-        for i, r in enumerate(reports[:15]):  # limit 15 di UI
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.write(f"**({r['tipe_file'].upper()})** {r['judul']}  \n*Kategori: {r.get('kategori', '-')}*")
-            with col2:
-                if st.button("Unduh", key=f"ojk_dl_{i}"):
-                    with st.spinner("Mengunduh..."):
-                        path = ojk_stats.download_report(r)
-                    if path:
-                        st.success(f"Tersimpan di `{path}`")
-                    else:
-                        st.error("Gagal mengunduh file.")
-    elif "ojk_reports" in st.session_state:
-        st.info("Tidak ada laporan ditemukan untuk filter tersebut.")
 

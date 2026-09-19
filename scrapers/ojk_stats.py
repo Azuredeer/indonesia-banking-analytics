@@ -141,6 +141,12 @@ def search_reports_multi(keyword: str | None = None, category_keys: list[str] | 
     return all_results
 
 
+def search_reports_by_keyword(keyword: str) -> list[dict]:
+    """Alias kompatibel untuk pencarian laporan OJK berdasarkan keyword judul."""
+    return search_reports_multi(keyword=keyword)
+
+
+
 def download_report(report: dict, target_dir: str = DATA_DIR) -> str:
     """
     Unduh satu file laporan OJK (hasil dari list_available_reports) ke disk.

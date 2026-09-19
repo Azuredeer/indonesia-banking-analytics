@@ -14,14 +14,22 @@ Cara Menjalankan:
     streamlit run app_scraper.py \\ ini jangan lupa
 """
 
+import importlib
 import logging
 from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
 from config import DEFAULT_TICKERS
-from scrapers import yahoo_finance, bi_kurs, bi_rate, ojk_stats
+from scrapers import yahoo_finance, bi_kurs, bi_rate
+
+# Paksa reload modul scraper agar selalu memakai kode terbaru di runtime Streamlit
+importlib.reload(bi_kurs)
+importlib.reload(bi_rate)
+importlib.reload(yahoo_finance)
+
 from utils.storage import save_all, save_csv, df_to_excel_bytes
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(message)s")
 logger = logging.getLogger("app_scraper")
@@ -229,7 +237,12 @@ elif page == "💱 Kurs Bank Indonesia":
     else:
         if st.button("🚀 Ambil Data Kurs BI", type="primary"):
             with st.spinner(f"Mengambil kurs {mata_uang} dari BI..."):
-                df_kurs = bi_kurs.get_kurs_range(mata_uang, tgl_awal, tgl_akhir)
+                start_str = tgl_awal.isoformat() if hasattr(tgl_awal, "isoformat") else str(tgl_awal)
+                end_str = tgl_akhir.isoformat() if hasattr(tgl_akhir, "isoformat") else str(tgl_akhir)
+                if hasattr(bi_kurs, "get_kurs_range"):
+                    df_kurs = bi_kurs.get_kurs_range(mata_uang, tgl_awal, tgl_akhir)
+                else:
+                    df_kurs = bi_kurs.get_kurs_transaksi_bi(mata_uang, start_date=start_str, end_date=end_str)
 
             if not df_kurs.empty:
                 st.success(f"Berhasil mengambil {len(df_kurs)} baris data kurs {mata_uang}.")
@@ -259,11 +272,16 @@ elif page == "🏦 BI-Rate":
     with col1:
         if st.button("📌 Ambil BI-Rate Terkini"):
             with st.spinner("Mengambil data terkini..."):
-                rate = bi_rate.get_current_bi_rate()
+                if hasattr(bi_rate, "get_current_bi_rate"):
+                    rate = bi_rate.get_current_bi_rate()
+                else:
+                    res = bi_rate.get_bi_rate_terkini()
+                    rate = float(res["nilai_persen"]) if res and res.get("nilai_persen") is not None else None
             if rate is not None:
                 st.metric("BI-Rate Terkini", f"{rate:.2f} %")
             else:
                 st.error("Gagal mengambil BI-Rate terkini dari situs BI.")
+
 
     with col2:
         if st.button("📜 Ambil Histori BI-Rate", type="primary"):
